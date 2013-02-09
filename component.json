@@ -2,5 +2,5 @@
   "name": "audio5",
   "version": "0.1.6",
   "main": ["./audio5.js", "./audio5.min.js", "./audio5js.swf"],
-  dependencies: {}
+  "dependencies": {}
 }
