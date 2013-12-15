@@ -4,9 +4,9 @@
  * License MIT (c) Zohar Arad 2013
  */
 (function ($win, ns, factory) {
+  "use strict";
   /*global define */
   /*global swfobject */
-  "use strict";
 
   if (typeof (module) !== 'undefined' && module.exports) { // CommonJS
     module.exports = factory(ns, $win);
@@ -86,11 +86,16 @@
      * @param {Object} ctx the context in which the callback should be executed
      */
     on: function (evt, fn, ctx) {
-      if (this.channels === undefined) {
-        this.channels = {};
-      }
-      this.channels[evt] = this.channels[evt] || [];
-      this.channels[evt].push({fn: fn, ctx: ctx});
+      this.subscribe(evt, fn, ctx, false);
+    },
+    /**
+     * Subscribe to a one-time event on a channel
+     * @param {String} evt name of channel / event to subscribe
+     * @param {Function} fn the callback to execute on message publishing
+     * @param {Object} ctx the context in which the callback should be executed
+     */
+    one: function(evt, fn, ctx) {
+      this.subscribe(evt, fn, ctx, true);
     },
     /**
      * Unsubscribe from an event on a channel
@@ -109,19 +114,37 @@
       }
     },
     /**
-     * Publish a message on a channel. Accepts **args after event name
+     * Add event subscription to channel. Called by `on` and `one`
+     * @param {String} evt name of channel / event to subscribe
+     * @param {Function} fn the callback to execute on message publishing
+     * @param {Object} ctx the context in which the callback should be executed
+     * @param {Boolean} once indicate if event should be triggered once or not
+     */
+    subscribe: function (evt, fn, ctx, once) {
+      if (this.channels === undefined) {
+        this.channels = {};
+      }
+      this.channels[evt] = this.channels[evt] || [];
+      this.channels[evt].push({fn: fn, ctx: ctx, once: (once || false)});
+    },
+    /**
+     * Publish a message on a channel. Accepts **args** after event name
      * @param {String} evt name of channel / event to trigger
      */
     trigger: function (evt) {
       if (this.channels && this.channels.hasOwnProperty(evt)) {
         var args = Array.prototype.slice.call(arguments, 1);
-        var i, l;
-        for (i = 0, l = this.channels[evt].length; i < l; i++) {
-          var sub = this.channels[evt][i];
+        var a = [];
+        while(this.channels[evt].length > 0) {
+          var sub = this.channels[evt].shift();
           if (typeof (sub.fn) === 'function') {
             sub.fn.apply(sub.ctx, args);
           }
+          if ( !sub.once ){
+            a.push(sub);
+          }
         }
+        this.channels[evt] = a;
       }
     }
   };
@@ -130,19 +153,19 @@
     /**
      * Flash embed code string with cross-browser support.
      */
-    flash_embed_code: (function () {
+	flash_embed_code: function (id, swf_location, ts) {
       var prefix;
-      var s = '<param name="movie" value="$2?playerInstance=window.' + ns + '_flash.instances[\'$1\']&datetime=$3"/>' +
+      var s = '<param name="movie" value="' + swf_location + '?playerInstance=window.' + ns + '_flash.instances["' + id + '"]&datetime=' + ts + '/>' +
         '<param name="wmode" value="transparent"/>' +
         '<param name="allowscriptaccess" value="always" />' +
         '</object>';
       if (ActiveXObject) {
-        prefix = '<object classid="clsid:D27CDB6E-AE6D-11cf-96B8-444553540000" width="1" height="1" id="$1">';
+        prefix = '<object classid="clsid:D27CDB6E-AE6D-11cf-96B8-444553540000" width="1" height="1" id="' + id + '">';
       } else {
-        prefix = '<object type="application/x-shockwave-flash" data="$2?playerInstance=window.' + ns + '_flash.instances[\'$1\']&datetime=$3" width="1" height="1" id="$1" >';
+        prefix = '<object type="application/x-shockwave-flash" data="' + swf_location + '?playerInstance=window.' + ns + '_flash.instances["' + id + '"]&datetime=' + ts + '" width="1" height="1" id="' + id + '" >';
       }
       return prefix + s;
-    }()),
+    },
     /**
      * Check if browser supports audio mime type.
      * @param {String} mime_type audio mime type to check
@@ -209,7 +232,7 @@
       document.body.appendChild(d);
       if(typeof($win.swfobject) === 'object'){
         var fv = {
-          playerInstance: 'window.'+ ns + '_flash.instances["'+id+'"]'
+          playerInstance: 'window.'+ ns + '_flash.instances[\''+id+'\']'
         };
         var params = {
           allowscriptaccess: 'always',
@@ -218,10 +241,8 @@
         d.innerHTML = '<div id="'+id+'"></div>';
         swfobject.embedSWF(swf_location + '?ts='+(new Date().getTime() + Math.random()), id, "1", "1", "9.0.0", null, fv, params);
       } else {
-        var flashSource = this.flash_embed_code.replace(/\$1/g, id);
-        flashSource = flashSource.replace(/\$2/g, swf_location);
-        flashSource = flashSource.replace(/\$3/g, (new Date().getTime() + Math.random())); // Ensure swf is not pulled from cache
-        d.innerHTML = flashSource;
+        var ts = new Date().getTime() + Math.random(); // Ensure swf is not pulled from cache
+        d.innerHTML = this.flash_embed_code(id, swf_location, ts);
       }
       return document.getElementById(id);
     },
@@ -258,7 +279,7 @@
     duration: 0, /** {Float} audio duration (sec) */
     position: 0, /** {Float} audio position (sec) */
     load_percent: 0, /** {Float} audio file load percent (%) */
-    seekable: null, /** {Boolean} is loaded audio seekable */
+    seekable: false, /** {Boolean} is loaded audio seekable */
     ready: null /** {Boolean} is loaded audio seekable */
   };
 
@@ -306,6 +327,24 @@
     eiReady: function () {
       this.audio = document.getElementById(this.id);
       this.trigger('ready');
+    },
+    /**
+     * ExternalInterface audio load started callback. Fires when audio starts loading.
+     */
+    eiLoadStart: function(){
+      this.trigger('loadstart');
+    },
+    /**
+     * ExternalInterface audio metadata loaded callback. Fires when audio ID3 tags have been loaded.
+     */
+    eiLoadedMetadata: function(){
+      this.trigger('loadedmetadata');
+    },
+    /**
+     * ExternalInterface audio can play callback. Fires when audio can be played.
+     */
+    eiCanPlay: function () {
+      this.trigger('canplay');
     },
     /**
      * ExternalInterface timeupdate callback. Fires as long as playhead position is updated (audio is being played).
@@ -356,10 +395,16 @@
       this.trigger('ended');
     },
     /**
-     * ExternalInterface audio ended callback. Fires when audio playback ended.
+     * ExternalInterface audio seeking callback. Fires when audio is being seeked.
      */
-    eiCanPlay: function () {
-      this.trigger('canplay');
+    eiSeeking: function(){
+      this.trigger('seeking');
+    },
+    /**
+     * ExternalInterface audio seeked callback. Fires when audio has been seeked.
+     */
+    eiSeeked: function(){
+      this.trigger('seeked');
     },
     /**
      * Resets audio position and parameters. Invoked once audio is loaded.
@@ -431,6 +476,9 @@
     init: function () {
       this.trigger('ready');
     },
+    /**
+     * Create new audio instance
+     */
     createAudio: function(){
       this.audio = new Audio();
       this.audio.autoplay = false;
@@ -438,6 +486,9 @@
       this.audio.autobuffer = true;
       this.bindEvents();
     },
+    /**
+     * Destroy current audio instance
+     */
     destroyAudio: function(){
       if(this.audio){
         this.unbindEvents();
@@ -448,20 +499,54 @@
      * Bind DOM events to Audio object
      */
     bindEvents: function () {
-      this.audio.addEventListener('timeupdate', this.onTimeUpdate.bind(this));
-      this.audio.addEventListener('play', this.onPlay.bind(this));
-      this.audio.addEventListener('pause', this.onPause.bind(this));
-      this.audio.addEventListener('ended', this.onEnded.bind(this));
-      this.audio.addEventListener('canplay', this.onLoad.bind(this));
-      this.audio.addEventListener('error', this.onError.bind(this));
+      this.audio.addEventListener('loadstart', this.onLoadStart.bind(this), false);
+      this.audio.addEventListener('canplay', this.onLoad.bind(this), false);
+      this.audio.addEventListener('loadedmetadata', this.onLoadedMetadata.bind(this), false);
+      this.audio.addEventListener('play', this.onPlay.bind(this), false);
+      this.audio.addEventListener('pause', this.onPause.bind(this), false);
+      this.audio.addEventListener('ended', this.onEnded.bind(this), false);
+      this.audio.addEventListener('error', this.onError.bind(this), false);
+      this.audio.addEventListener('timeupdate', this.onTimeUpdate.bind(this), false);
+      this.audio.addEventListener('seeking', this.onSeeking.bind(this), false);
+      this.audio.addEventListener('seeked', this.onSeeked.bind(this), false);
     },
+    /**
+     * Unbind DOM events from Audio object
+     */
     unbindEvents: function(){
-      this.audio.removeEventListener('timeupdate', this.onTimeUpdate.bind(this));
+      this.audio.removeEventListener('loadstart', this.onLoadStart.bind(this));
+      this.audio.removeEventListener('canplay', this.onLoad.bind(this));
+      this.audio.removeEventListener('loadedmetadata', this.onLoadedMetadata.bind(this));
       this.audio.removeEventListener('play', this.onPlay.bind(this));
       this.audio.removeEventListener('pause', this.onPause.bind(this));
       this.audio.removeEventListener('ended', this.onEnded.bind(this));
-      this.audio.removeEventListener('canplay', this.onLoad.bind(this));
       this.audio.removeEventListener('error', this.onError.bind(this));
+      this.audio.removeEventListener('timeupdate', this.onTimeUpdate.bind(this));
+      this.audio.removeEventListener('seeking', this.onSeeking.bind(this));
+      this.audio.removeEventListener('seeked', this.onSeeked.bind(this));
+    },
+    /**
+     * Audio load start event handler. Triggered when audio starts loading
+     */
+    onLoadStart: function(){
+      this.trigger('loadstart');
+    },
+    /**
+     * Audio canplay event handler. Triggered when audio is loaded and can be played.
+     * Resets player parameters and starts audio download progress timer.
+     */
+    onLoad: function () {
+      this.seekable = this.audio.seekable && this.audio.seekable.length > 0;
+      if (this.seekable) {
+        this.timer = setInterval(this.onProgress.bind(this), 250);
+      }
+      this.trigger('canplay');
+    },
+    /**
+     * Audio ID3 load event handler. Triggered when ID3 metadata is loaded.
+     */
+    onLoadedMetadata: function(){
+      this.trigger('loadedmetadata');
     },
     /**
      * Audio play event handler. Triggered when audio starts playing.
@@ -495,17 +580,6 @@
       }
     },
     /**
-     * Audio canplay event handler. Triggered when audio is loaded and can be played.
-     * Resets player parameters and starts audio download progress timer.
-     */
-    onLoad: function () {
-      this.seekable = this.audio.seekable && this.audio.seekable.length > 0;
-      if (this.seekable) {
-        this.timer = setInterval(this.onProgress.bind(this), 250);
-      }
-      this.trigger('canplay');
-    },
-    /**
      * Audio download progress timer callback. Check audio's download percentage.
      * Called periodically as soon as the audio loads and can be played.
      * Cancelled when audio has fully download or when a new audio file has been loaded to the player.
@@ -525,6 +599,18 @@
      */
     onError: function (e) {
       this.trigger('error', e);
+    },
+    /**
+     * Audio seeking event handler. Triggered when audio seek starts.
+     */
+    onSeeking: function(){
+      this.trigger('seeking');
+    },
+    /**
+     * Audio seeked event handler. Triggered when audio has been seeked.
+     */
+    onSeeked: function(){
+      this.trigger('seeked');
     },
     /**
      * Clears periodical audio download progress callback.
@@ -702,6 +788,8 @@
      */
     bindAudioEvents: function () {
       this.audio.on('ready', this.onReady, this);
+      this.audio.on('loadstart', this.onLoadStart, this);
+      this.audio.on('loadedmetadata', this.onLoadedMetadata, this);
       this.audio.on('play', this.onPlay, this);
       this.audio.on('pause', this.onPause, this);
       this.audio.on('ended', this.onEnded, this);
@@ -709,6 +797,8 @@
       this.audio.on('timeupdate', this.onTimeUpdate, this);
       this.audio.on('progress', this.onProgress, this);
       this.audio.on('error', this.onError, this);
+      this.audio.on('seeking', this.onSeeking, this);
+      this.audio.on('seeked', this.onSeeked, this);
     },
     /**
      * Load audio from URL
@@ -781,6 +871,18 @@
       this.trigger('ready');
     },
     /**
+     * Audio load start event handler
+     */
+    onLoadStart: function(){
+      this.trigger('loadstart');
+    },
+    /**
+     * Audio metadata loaded event handler
+     */
+    onLoadedMetadata: function(){
+      this.trigger('loadedmetadata');
+    },
+    /**
      * Audio play event handler
      */
     onPlay: function () {
@@ -817,6 +919,18 @@
      */
     onCanPlay: function () {
       this.trigger('canplay');
+    },
+    /**
+     * Audio seeking event handler
+     */
+    onSeeking: function(){
+      this.trigger('seeking');
+    },
+    /**
+     * Audio seeked event handler
+     */
+    onSeeked: function(){
+      this.trigger('seeked');
     },
     /**
      * Playback time update event handler
