@@ -155,14 +155,14 @@
      */
 	flash_embed_code: function (id, swf_location, ts) {
       var prefix;
-      var s = '<param name="movie" value="' + swf_location + '?playerInstance=window.' + ns + '_flash.instances["' + id + '"]&datetime=' + ts + '/>' +
+      var s = '<param name="movie" value="' + swf_location + '?playerInstance=window.' + ns + '_flash.instances[\'' + id + '\']&datetime=' + ts + '/>' +
         '<param name="wmode" value="transparent"/>' +
         '<param name="allowscriptaccess" value="always" />' +
         '</object>';
       if (ActiveXObject) {
         prefix = '<object classid="clsid:D27CDB6E-AE6D-11cf-96B8-444553540000" width="1" height="1" id="' + id + '">';
       } else {
-        prefix = '<object type="application/x-shockwave-flash" data="' + swf_location + '?playerInstance=window.' + ns + '_flash.instances["' + id + '"]&datetime=' + ts + '" width="1" height="1" id="' + id + '" >';
+        prefix = '<object type="application/x-shockwave-flash" data="' + swf_location + '?playerInstance=window.' + ns + '_flash.instances[\'' + id + '\']&datetime=' + ts + '" width="1" height="1" id="' + id + '" >';
       }
       return prefix + s;
     },
@@ -175,30 +175,32 @@
       var a = document.createElement('audio');
       var mime_str;
       switch (mime_type) {
-      case 'mp3':
-        mime_str = 'audio/mpeg; codecs="mp3"';
-        break;
-      case 'vorbis':
-        mime_str = 'audio/ogg; codecs="vorbis"';
-        break;
-      case 'opus':
-        mime_str = 'audio/ogg; codecs="opus"';
-        break;
-      case 'webm':
-        mime_str = 'audio/webm; codecs="vorbis"';
-        break;
-      case 'mp4':
-        mime_str = 'audio/mp4; codecs="mp4a.40.5"';
-        break;
-      case 'wav':
-        mime_str = 'audio/wav; codecs="1"';
-        break;
+        case 'mp3':
+          mime_str = 'audio/mpeg; codecs="mp3"';
+          break;
+        case 'vorbis':
+          mime_str = 'audio/ogg; codecs="vorbis"';
+          break;
+        case 'opus':
+          mime_str = 'audio/ogg; codecs="opus"';
+          break;
+        case 'webm':
+          mime_str = 'audio/webm; codecs="vorbis"';
+          break;
+        case 'mp4':
+          mime_str = 'audio/mp4; codecs="mp4a.40.5"';
+          break;
+        case 'wav':
+          mime_str = 'audio/wav; codecs="1"';
+          break;
       }
-      if (mime_str === undefined) {
-        throw new Error('Unspecified Audio Mime Type');
-      } else {
+      if (mime_str !== undefined) {
+        if (mime_type === 'mp3' && navigator.userAgent.match(/Android/i) && navigator.userAgent.match(/Firefox/i)) {
+          return true;
+        }
         return !!a.canPlayType && a.canPlayType(mime_str) !== '';
       }
+      return false;
     },
     /**
      * Boolean flag indicating whether the browser has Flash installed or not
@@ -391,7 +393,7 @@
      * ExternalInterface audio ended callback. Fires when audio playback ended.
      */
     eiEnded: function () {
-      this.playing = false;
+      this.pause();
       this.trigger('ended');
     },
     /**
@@ -536,6 +538,9 @@
      * Resets player parameters and starts audio download progress timer.
      */
     onLoad: function () {
+      if(!this.audio){
+        return setTimeout(this.onLoad.bind(this), 100);
+      }
       this.seekable = this.audio.seekable && this.audio.seekable.length > 0;
       if (this.seekable) {
         this.timer = setInterval(this.onProgress.bind(this), 250);
@@ -573,9 +578,11 @@
      * Audio timeupdate event handler. Triggered as long as playhead position is updated (audio is being played).
      */
     onTimeUpdate: function () {
-      if (this.audio.buffered !== null && this.audio.buffered.length && this.playing) {
-        this.position = this.audio.currentTime;
-        this.duration = this.audio.duration === Infinity ? null : this.audio.duration;
+      if (this.audio && this.playing) {
+        try{
+          this.position = this.audio.currentTime;
+          this.duration = this.audio.duration === Infinity ? null : this.audio.duration;
+        } catch (e){}
         this.trigger('timeupdate', this.position, this.duration);
       }
     },
@@ -585,7 +592,7 @@
      * Cancelled when audio has fully download or when a new audio file has been loaded to the player.
      */
     onProgress: function () {
-      if (this.audio.buffered !== null && this.audio.buffered.length) {
+      if (this.audio && this.audio.buffered !== null && this.audio.buffered.length) {
         this.load_percent = parseInt(((this.audio.buffered.end(this.audio.buffered.length - 1) / this.audio.duration) * 100), 10);
         this.trigger('progress', this.load_percent);
         if (this.load_percent >= 100) {
@@ -805,13 +812,14 @@
      * @param {String} url URL of audio to load
      */
     load: function (url) {
-      var f = function(u){
-        this.audio.load(u);
-        this.trigger('load');
-      }.bind(this, url);
+      var that = this,
+          f = function(u){
+            that.audio.load(u);
+            that.trigger('load');
+          };
 
       if(this.ready){
-        f();
+        f(url);
       } else {
         this.on('ready', f);
       }

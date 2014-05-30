@@ -1,6 +1,6 @@
 {
     "name": "audio5",
-    "version": "0.1.8",
+    "version": "0.1.9",
     "main": [
         "./audio5.js",
         "./audio5.min.js",
